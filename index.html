@@ -5,18 +5,20 @@
 <title>いろがく推しランキング</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; }
   h1 { font-size: 20px; margin: 0 0 12px; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; margin-bottom:8px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; margin-bottom:10px; }
   textarea { width: 100%; height: 300px; }
-  button { padding: 8px 12px; }
+  button { padding: 8px 12px; cursor: pointer; }
   .hidden { display:none; }
-  .pair { display:flex; gap:12px; align-items:stretch; }
-  .choice { flex:1; border:1px solid #ddd; border-radius:10px; padding:16px; text-align:center; cursor:pointer; }
+  .pair { display:grid; grid-template-columns: 1fr 60px 1fr; gap:12px; align-items: stretch; }
+  .choice { border:1px solid #ddd; border-radius:12px; padding:16px; text-align:center; cursor:pointer; position:relative; }
   .choice:hover { background:#f7f7f7; }
-  .vs { width:32px; display:flex; align-items:center; justify-content:center; color:#666; }
-  ol { padding-left:20px; }
+  .hint { position:absolute; bottom:8px; left:8px; right:8px; font-size:12px; color:#666; }
+  .vs { display:flex; align-items:center; justify-content:center; color:#666; }
+  ol { padding-left: 22px; }
   .muted { color:#666; font-size:13px; }
+  .badge { display:inline-block; background:#eef; color:#334; font-size:12px; padding:2px 6px; border-radius:999px; }
 </style>
 </head>
 <body>
@@ -36,7 +38,7 @@
 明智 ひまり
 深園 逢夢
 佐々木 絢芽
-シャーロット・乃亜・モーガン
+シャーロット・N・モーガン
 蓮 鏡世
 甘天 心杏
 草薙 礼於
@@ -87,14 +89,17 @@
 竜染寺 唄芭</textarea>
 
 <div id="ui" class="hidden">
-  <p class="muted">比較回数: <span id="cmp">0</span>　候補: <span id="cand">—</span></p>
+  <p class="muted">比較回数: <span id="cmp">0</span>　
+    フェーズ: <span id="phase" class="badge">候補取り込み</span>　
+    候補: <span id="cand">—</span>
+  </p>
   <div class="pair">
-    <div id="left" class="choice"></div>
+    <div id="left" class="choice"><div class="hint">← こっちが好き</div></div>
     <div class="vs">VS</div>
-    <div id="right" class="choice"></div>
+    <div id="right" class="choice"><div class="hint">こっちが好き →</div></div>
   </div>
-  <div class="row" style="margin-top:8px;">
-    <button id="undo">1手戻す</button>
+  <div class="row" style="margin-top:10px;">
+    <button id="undo">1手戻す（簡易）</button>
   </div>
 </div>
 
@@ -107,25 +112,28 @@
 <script>
 (function(){
   function $(id){ return document.getElementById(id); }
+  var K = 10, cmpCount = 0, history = [];
+  var leftHandler = null, rightHandler = null;
 
-  var K = 10;
-  var cmpCount = 0;
-  var history = [];
+  function setPhase(text){ $("phase").textContent = text; }
 
-  // UI compare (左が強い=-1 / 右=+1 を返す)
+  // 共通UI: 左(=a)がより好きなら -1、右(=b)なら +1
   function uiCompare(a,b,label){
     return new Promise(function(resolve){
-      $("left").textContent = a;
-      $("right").textContent = b;
+      $("left").textContent = a; $("right").textContent = b;
       $("cand").textContent = label || "";
-      function onL(){ cleanup(); resolve(-1); }
-      function onR(){ cleanup(); resolve(1); }
+      // 旧ハンドラを確実に解除
+      if (leftHandler) $("left").removeEventListener("click", leftHandler);
+      if (rightHandler) $("right").removeEventListener("click", rightHandler);
+      leftHandler = function(){ cleanup(); resolve(-1); };
+      rightHandler = function(){ cleanup(); resolve(1); };
+      $("left").addEventListener("click", leftHandler);
+      $("right").addEventListener("click", rightHandler);
       function cleanup(){
-        $("left").removeEventListener("click", onL);
-        $("right").removeEventListener("click", onR);
+        $("left").removeEventListener("click", leftHandler);
+        $("right").removeEventListener("click", rightHandler);
+        leftHandler = rightHandler = null;
       }
-      $("left").addEventListener("click", onL);
-      $("right").addEventListener("click", onR);
     }).then(function(res){
       cmpCount++; $("cmp").textContent = String(cmpCount);
       history.push({a:a,b:b,res:res});
@@ -133,76 +141,68 @@
     });
   }
 
-  // 2分探索で順位に挿入（比較は必ずUI経由）
-  function binaryInsert(top, item){
-    return new Promise(async function(resolve){
-      if (top.length === 0){ top.push(item); return resolve(); }
-      var lo = 0, hi = top.length; // [lo, hi)
-      while (lo < hi){
-        var mid = Math.floor((lo+hi)/2);
-        var r = await uiCompare(item, top[mid], "順位挿入");
-        if (r <= 0){ hi = mid; } else { lo = mid + 1; }
-      }
-      top.splice(lo, 0, item);
-      resolve();
-    });
+  // 二分挿入：top内の正しい位置に item を入れる（必ずUI比較を通す）
+  async function binaryInsert(top, item){
+    if (top.length === 0){ top.push(item); return; }
+    let lo = 0, hi = top.length;
+    while (lo < hi){
+      const mid = Math.floor((lo+hi)/2);
+      const r = await uiCompare(item, top[mid], "順位挿入");
+      if (r <= 0) hi = mid; else lo = mid + 1;
+    }
+    top.splice(lo, 0, item);
   }
 
-  // 候補 item をTopKに挑戦させる
+  // 候補取り込み：Top10に挑戦
   async function challenge(top, item){
-    if (top.length < K){
-      await binaryInsert(top, item);
-      return;
-    }
-    // まず現在の10位（末尾）と比較
-    var r = await uiCompare(item, top[top.length-1], "まずは10位と比較");
-    if (r > 0){ // itemの方が弱い
-      return;   // 何もしない（Top10残留者は全員、最低1回は登場済み）
-    }
-    // 強いなら、正しい位置まで二分挿入
+    setPhase("候補取り込み");
+    if (top.length < K){ await binaryInsert(top, item); return; }
+    // まず10位と比較（これで“見ないまま入る”問題を排除）
+    let r = await uiCompare(item, top[top.length-1], "まず10位と比較");
+    if (r > 0) return; // 負け：入らない
     await binaryInsert(top, item);
-    // 11位を落とす
-    if (top.length > K) top.length = K;
+    if (top.length > K) top.length = K; // 11位を落とす
+  }
+
+  // ★ 1位保証：王者決定戦（Top10内で“最強”を必ず直接比較で決定）
+  async function ensureChampion(top){
+    setPhase("王者決定戦（1位保証）");
+    let champ = top[0];
+    for (let i=1;i<top.length;i++){
+      const r = await uiCompare(champ, top[i], "1位決定戦");
+      if (r > 0) champ = top[i]; // 右が好き＝挑戦者が勝ち
+    }
+    // champ を先頭に移動
+    const idx = top.indexOf(champ);
+    if (idx > -1){ top.splice(idx,1); top.unshift(champ); }
   }
 
   function shuffle(a){
     a = a.slice();
-    for (var i=a.length-1;i>0;i--){
-      var j = Math.floor(Math.random()*(i+1));
-      var t = a[i]; a[i]=a[j]; a[j]=t;
-    }
+    for (let i=a.length-1;i>0;i--){ const j = (Math.random()*(i+1))|0; [a[i],a[j]]=[a[j],a[i]]; }
     return a;
   }
 
   $("start").addEventListener("click", async function(){
-    var raw = $("items").value.split("\n");
-    var list = [];
-    for (var i=0;i<raw.length;i++){
-      var s = raw[i].replace(/^\s+|\s+$/g,"");
-      if (s) list.push(s);
-    }
+    const raw = $("items").value.split("\n");
+    const list = raw.map(s=>s.trim()).filter(Boolean);
     if (list.length < 2){ alert("2名以上入力してね"); return; }
 
     cmpCount = 0; history = [];
-    $("cmp").textContent = "0";
-    $("cand").textContent = "—";
+    $("cmp").textContent = "0"; $("cand").textContent = "—";
     $("result").classList.add("hidden");
     $("ui").classList.remove("hidden");
 
-    var top = [];
-    var order = shuffle(list);
-    for (var idx=0; idx<order.length; idx++){
-      var name = order[idx];
-      await challenge(top, name);
-    }
+    const order = shuffle(list);
+    const top = [];
+    for (let i=0;i<order.length;i++){ await challenge(top, order[i]); }
+
+    // 1位保証フェーズ
+    await ensureChampion(top);
 
     // 結果表示
-    var ol = $("list"); ol.innerHTML = "";
-    for (var i=0;i<top.length;i++){
-      var li = document.createElement("li");
-      li.textContent = top[i];
-      ol.appendChild(li);
-    }
+    const ol = $("list"); ol.innerHTML = "";
+    top.forEach(n => { const li = document.createElement("li"); li.textContent = n; ol.appendChild(li); });
     $("ui").classList.add("hidden");
     $("result").classList.remove("hidden");
   });
@@ -212,15 +212,13 @@
     cmpCount = 0; history = [];
   });
 
-  // 直前比較だけ簡易UNDO（順位は再計算しない簡易版）
   $("undo").addEventListener("click", function(){
     if (!history.length) return;
     cmpCount = Math.max(0, cmpCount-1);
     $("cmp").textContent = String(cmpCount);
-    history.pop(); // 表示上の比較カウントだけ戻す（厳密巻き戻しは実装簡素化）
-    alert("直前の比較カウントを戻しました（厳密な巻き戻しは未対応）");
+    history.pop();
+    alert("比較カウントだけ1手戻しました（厳密巻き戻しは省略）");
   });
-
 })();
 </script>
 </body>
