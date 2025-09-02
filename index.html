@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<title>いろがく推しランキング（固定）</title>
+<title>いろがく推しランキング</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 800px; margin: 24px auto; padding: 0 16px; }
@@ -24,7 +24,7 @@
 
 <div class="row">
   <button id="start">開始</button>
-  <span class="muted">←ボタンを押してね</span>
+  <span class="muted">ボタンを押してね</span>
 </div>
 
 <textarea id="items">兎江戸 和歩
@@ -87,7 +87,7 @@
 竜染寺 唄芭</textarea>
 
 <div id="ui" class="hidden">
-  <p class="muted">比較回数: <span id="cmp">0</span>　進行状況: <span id="prog">—</span></p>
+  <p class="muted">比較回数: <span id="cmp">0</span>　候補: <span id="cand">—</span></p>
   <div class="pair">
     <div id="left" class="choice"></div>
     <div class="vs">VS</div>
@@ -99,7 +99,7 @@
 </div>
 
 <div id="result" class="hidden">
-  <h2>Top <span id="topkN">10</span> 結果</h2>
+  <h2>Top <span>10</span> 結果</h2>
   <ol id="list"></ol>
   <div class="row"><button id="restart">もう一度</button></div>
 </div>
@@ -108,65 +108,65 @@
 (function(){
   function $(id){ return document.getElementById(id); }
 
-  var K = 10; // ★ ここでTop数を固定
+  var K = 10;
   var cmpCount = 0;
-  var compareResolve = null;
-  var compareQueue = [];
   var history = [];
 
-  function show(el, flag){ el.classList.toggle("hidden", !flag); }
-
-  function uiShowPair(a,b,progress){
-    $("left").textContent = a;
-    $("right").textContent = b;
-    $("prog").textContent = progress;
-    $("cmp").textContent = String(cmpCount);
-  }
-
-  function userCompare(a,b,progress){
+  // UI compare (左が強い=-1 / 右=+1 を返す)
+  function uiCompare(a,b,label){
     return new Promise(function(resolve){
-      compareResolve = resolve;
-      compareQueue.push({a:a,b:b,progress:progress});
-      if (compareQueue.length === 1) uiShowPair(a,b,progress);
+      $("left").textContent = a;
+      $("right").textContent = b;
+      $("cand").textContent = label || "";
+      function onL(){ cleanup(); resolve(-1); }
+      function onR(){ cleanup(); resolve(1); }
+      function cleanup(){
+        $("left").removeEventListener("click", onL);
+        $("right").removeEventListener("click", onR);
+      }
+      $("left").addEventListener("click", onL);
+      $("right").addEventListener("click", onR);
+    }).then(function(res){
+      cmpCount++; $("cmp").textContent = String(cmpCount);
+      history.push({a:a,b:b,res:res});
+      return res;
     });
   }
 
-  function flushNextPair(){
-    if (!compareQueue.length) return;
-    var p = compareQueue[0];
-    uiShowPair(p.a, p.b, p.progress);
+  // 2分探索で順位に挿入（比較は必ずUI経由）
+  function binaryInsert(top, item){
+    return new Promise(async function(resolve){
+      if (top.length === 0){ top.push(item); return resolve(); }
+      var lo = 0, hi = top.length; // [lo, hi)
+      while (lo < hi){
+        var mid = Math.floor((lo+hi)/2);
+        var r = await uiCompare(item, top[mid], "順位挿入");
+        if (r <= 0){ hi = mid; } else { lo = mid + 1; }
+      }
+      top.splice(lo, 0, item);
+      resolve();
+    });
   }
 
-  $("left").addEventListener("click", function(){
-    if (!compareResolve || !compareQueue.length) return;
-    var p = compareQueue.shift();
-    history.push({a:p.a,b:p.b,choice:p.a});
-    cmpCount++; $("cmp").textContent = String(cmpCount);
-    var r = compareResolve; compareResolve = null;
-    r(-1); flushNextPair();
-  });
+  // 候補 item をTopKに挑戦させる
+  async function challenge(top, item){
+    if (top.length < K){
+      await binaryInsert(top, item);
+      return;
+    }
+    // まず現在の10位（末尾）と比較
+    var r = await uiCompare(item, top[top.length-1], "まずは10位と比較");
+    if (r > 0){ // itemの方が弱い
+      return;   // 何もしない（Top10残留者は全員、最低1回は登場済み）
+    }
+    // 強いなら、正しい位置まで二分挿入
+    await binaryInsert(top, item);
+    // 11位を落とす
+    if (top.length > K) top.length = K;
+  }
 
-  $("right").addEventListener("click", function(){
-    if (!compareResolve || !compareQueue.length) return;
-    var p = compareQueue.shift();
-    history.push({a:p.a,b:p.b,choice:p.b});
-    cmpCount++; $("cmp").textContent = String(cmpCount);
-    var r = compareResolve; compareResolve = null;
-    r(1); flushNextPair();
-  });
-
-  $("undo").addEventListener("click", function(){
-    if (!history.length) return;
-    var last = history.pop();
-    cmpCount = Math.max(0, cmpCount - 1);
-    $("cmp").textContent = String(cmpCount);
-    compareQueue.unshift({a:last.a,b:last.b,progress:"(やり直し)"});
-    if (!compareResolve) { userCompare(last.a,last.b,"(やり直し)"); }
-    flushNextPair();
-  });
-
-  function shuffle(arr){
-    var a = arr.slice();
+  function shuffle(a){
+    a = a.slice();
     for (var i=a.length-1;i>0;i--){
       var j = Math.floor(Math.random()*(i+1));
       var t = a[i]; a[i]=a[j]; a[j]=t;
@@ -174,61 +174,53 @@
     return a;
   }
 
-  function compareWithUI(a,b,progress){ return userCompare(a,b,progress); }
-
-  function mergeTopK(A,B,k,compare,progress){
-    return new Promise(function(resolve){
-      var out=[], i=0, j=0;
-      function step(){
-        if (out.length >= k || (i>=A.length && j>=B.length)) { resolve(out); return; }
-        if (i>=A.length){ out.push(B[j++]); step(); return; }
-        if (j>=B.length){ out.push(A[i++]); step(); return; }
-        var a=A[i], b=B[j];
-        compare(a,b, progress + " 残:" + (k - out.length)).then(function(res){
-          if (res <= 0){ out.push(a); i++; } else { out.push(b); j++; }
-          step();
-        });
-      }
-      step();
-    });
-  }
-
-  function sortTopK(arr,k,compare,progress){
-    if (arr.length <= 1) return Promise.resolve(arr.slice());
-    var mid = Math.floor(arr.length/2);
-    var left = arr.slice(0,mid);
-    var right = arr.slice(mid);
-    return sortTopK(left, Math.min(k,left.length), compare, progress+"L").then(function(L){
-      return sortTopK(right, Math.min(k,right.length), compare, progress+"R").then(function(R){
-        return mergeTopK(L,R,k,compare,progress);
-      });
-    });
-  }
-
-  $("start").addEventListener("click", function(){
+  $("start").addEventListener("click", async function(){
     var raw = $("items").value.split("\n");
     var list = [];
     for (var i=0;i<raw.length;i++){
       var s = raw[i].replace(/^\s+|\s+$/g,"");
       if (s) list.push(s);
     }
-    if (list.length < 2) { alert("2名以上入力してね"); return; }
+    if (list.length < 2){ alert("2名以上入力してね"); return; }
 
-    cmpCount = 0; history = []; compareQueue = []; compareResolve = null;
-    show($("result"), false); show($("ui"), true);
-    sortTopK(shuffle(list), Math.min(K, list.length), compareWithUI, "").then(function(topK){
-      var ol = $("list"); ol.innerHTML = "";
-      for (var i=0;i<topK.length;i++){
-        var li = document.createElement("li"); li.textContent = topK[i]; ol.appendChild(li);
-      }
-      show($("result"), true); show($("ui"), false);
-    });
+    cmpCount = 0; history = [];
+    $("cmp").textContent = "0";
+    $("cand").textContent = "—";
+    $("result").classList.add("hidden");
+    $("ui").classList.remove("hidden");
+
+    var top = [];
+    var order = shuffle(list);
+    for (var idx=0; idx<order.length; idx++){
+      var name = order[idx];
+      await challenge(top, name);
+    }
+
+    // 結果表示
+    var ol = $("list"); ol.innerHTML = "";
+    for (var i=0;i<top.length;i++){
+      var li = document.createElement("li");
+      li.textContent = top[i];
+      ol.appendChild(li);
+    }
+    $("ui").classList.add("hidden");
+    $("result").classList.remove("hidden");
   });
 
   $("restart").addEventListener("click", function(){
-    show($("result"), false);
-    cmpCount = 0; history = []; compareQueue = []; compareResolve = null;
+    $("result").classList.add("hidden");
+    cmpCount = 0; history = [];
   });
+
+  // 直前比較だけ簡易UNDO（順位は再計算しない簡易版）
+  $("undo").addEventListener("click", function(){
+    if (!history.length) return;
+    cmpCount = Math.max(0, cmpCount-1);
+    $("cmp").textContent = String(cmpCount);
+    history.pop(); // 表示上の比較カウントだけ戻す（厳密巻き戻しは実装簡素化）
+    alert("直前の比較カウントを戻しました（厳密な巻き戻しは未対応）");
+  });
+
 })();
 </script>
 </body>
