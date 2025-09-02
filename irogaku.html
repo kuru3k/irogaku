@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>いろがく推しランキング（固定）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; margin-bottom:8px; }
+  textarea { width: 100%; height: 300px; }
+  button { padding: 8px 12px; }
+  .hidden { display:none; }
+  .pair { display:flex; gap:12px; align-items:stretch; }
+  .choice { flex:1; border:1px solid #ddd; border-radius:10px; padding:16px; text-align:center; cursor:pointer; }
+  .choice:hover { background:#f7f7f7; }
+  .vs { width:32px; display:flex; align-items:center; justify-content:center; color:#666; }
+  ol { padding-left:20px; }
+  .muted { color:#666; font-size:13px; }
+</style>
+</head>
+<body>
+<h1>いろがく推しランキング</h1>
+
+<div class="row">
+  <button id="start">開始</button>
+  <span class="muted">←ボタンを押してね</span>
+</div>
+
+<textarea id="items">兎江戸 和歩
+綺城 乙葉
+七々瀬 茉緩
+温森 あの
+雲隠ノ一 楓梅
+アイオーン
+明智 ひまり
+深園 逢夢
+佐々木 絢芽
+シャーロット・乃亜・モーガン
+蓮 鏡世
+甘天 心杏
+草薙 礼於
+倉掛 結凪
+小花衣 つづり
+西園寺 伊織
+坂本 羽音
+ニーカ・スミルノワ
+空城 みくる
+調野 玟那
+高木 愛美
+高橋 華子
+幽刻 ヨネ
+結崎 櫻子
+凰雅 醒子
+金城 あとり
+久飴 千歳
+久遠 義恒
+十羽 ツバサ
+榛瀬 百緒
+星乃宮 ゆめこ
+神子田 夏妃
+出雲 澄
+大月 周
+風端 識
+綺城 佳奈
+羽宮 ゆい
+平野 にあ
+美旗 いずな
+姚 蘭華
+李莉
+冷泉 紗麗
+御伽 まひる
+綺咲 苺香
+西院 雅
+翠川 恭
+那田出 ココ
+矢切 あずま
+荊棘 密杞
+加愛井・ラヴ・舞耶
+桐枝 環里
+玖重 憩
+玖重 ゆる
+紗倉 小春
+宙波 のんのん
+涅采 べに
+八木 めいこ
+竜染寺 唄芭</textarea>
+
+<div id="ui" class="hidden">
+  <p class="muted">比較回数: <span id="cmp">0</span>　進行状況: <span id="prog">—</span></p>
+  <div class="pair">
+    <div id="left" class="choice"></div>
+    <div class="vs">VS</div>
+    <div id="right" class="choice"></div>
+  </div>
+  <div class="row" style="margin-top:8px;">
+    <button id="undo">1手戻す</button>
+  </div>
+</div>
+
+<div id="result" class="hidden">
+  <h2>Top <span id="topkN">10</span> 結果</h2>
+  <ol id="list"></ol>
+  <div class="row"><button id="restart">もう一度</button></div>
+</div>
+
+<script>
+(function(){
+  function $(id){ return document.getElementById(id); }
+
+  var K = 10; // ★ ここでTop数を固定
+  var cmpCount = 0;
+  var compareResolve = null;
+  var compareQueue = [];
+  var history = [];
+
+  function show(el, flag){ el.classList.toggle("hidden", !flag); }
+
+  function uiShowPair(a,b,progress){
+    $("left").textContent = a;
+    $("right").textContent = b;
+    $("prog").textContent = progress;
+    $("cmp").textContent = String(cmpCount);
+  }
+
+  function userCompare(a,b,progress){
+    return new Promise(function(resolve){
+      compareResolve = resolve;
+      compareQueue.push({a:a,b:b,progress:progress});
+      if (compareQueue.length === 1) uiShowPair(a,b,progress);
+    });
+  }
+
+  function flushNextPair(){
+    if (!compareQueue.length) return;
+    var p = compareQueue[0];
+    uiShowPair(p.a, p.b, p.progress);
+  }
+
+  $("left").addEventListener("click", function(){
+    if (!compareResolve || !compareQueue.length) return;
+    var p = compareQueue.shift();
+    history.push({a:p.a,b:p.b,choice:p.a});
+    cmpCount++; $("cmp").textContent = String(cmpCount);
+    var r = compareResolve; compareResolve = null;
+    r(-1); flushNextPair();
+  });
+
+  $("right").addEventListener("click", function(){
+    if (!compareResolve || !compareQueue.length) return;
+    var p = compareQueue.shift();
+    history.push({a:p.a,b:p.b,choice:p.b});
+    cmpCount++; $("cmp").textContent = String(cmpCount);
+    var r = compareResolve; compareResolve = null;
+    r(1); flushNextPair();
+  });
+
+  $("undo").addEventListener("click", function(){
+    if (!history.length) return;
+    var last = history.pop();
+    cmpCount = Math.max(0, cmpCount - 1);
+    $("cmp").textContent = String(cmpCount);
+    compareQueue.unshift({a:last.a,b:last.b,progress:"(やり直し)"});
+    if (!compareResolve) { userCompare(last.a,last.b,"(やり直し)"); }
+    flushNextPair();
+  });
+
+  function shuffle(arr){
+    var a = arr.slice();
+    for (var i=a.length-1;i>0;i--){
+      var j = Math.floor(Math.random()*(i+1));
+      var t = a[i]; a[i]=a[j]; a[j]=t;
+    }
+    return a;
+  }
+
+  function compareWithUI(a,b,progress){ return userCompare(a,b,progress); }
+
+  function mergeTopK(A,B,k,compare,progress){
+    return new Promise(function(resolve){
+      var out=[], i=0, j=0;
+      function step(){
+        if (out.length >= k || (i>=A.length && j>=B.length)) { resolve(out); return; }
+        if (i>=A.length){ out.push(B[j++]); step(); return; }
+        if (j>=B.length){ out.push(A[i++]); step(); return; }
+        var a=A[i], b=B[j];
+        compare(a,b, progress + " 残:" + (k - out.length)).then(function(res){
+          if (res <= 0){ out.push(a); i++; } else { out.push(b); j++; }
+          step();
+        });
+      }
+      step();
+    });
+  }
+
+  function sortTopK(arr,k,compare,progress){
+    if (arr.length <= 1) return Promise.resolve(arr.slice());
+    var mid = Math.floor(arr.length/2);
+    var left = arr.slice(0,mid);
+    var right = arr.slice(mid);
+    return sortTopK(left, Math.min(k,left.length), compare, progress+"L").then(function(L){
+      return sortTopK(right, Math.min(k,right.length), compare, progress+"R").then(function(R){
+        return mergeTopK(L,R,k,compare,progress);
+      });
+    });
+  }
+
+  $("start").addEventListener("click", function(){
+    var raw = $("items").value.split("\n");
+    var list = [];
+    for (var i=0;i<raw.length;i++){
+      var s = raw[i].replace(/^\s+|\s+$/g,"");
+      if (s) list.push(s);
+    }
+    if (list.length < 2) { alert("2名以上入力してね"); return; }
+
+    cmpCount = 0; history = []; compareQueue = []; compareResolve = null;
+    show($("result"), false); show($("ui"), true);
+    sortTopK(shuffle(list), Math.min(K, list.length), compareWithUI, "").then(function(topK){
+      var ol = $("list"); ol.innerHTML = "";
+      for (var i=0;i<topK.length;i++){
+        var li = document.createElement("li"); li.textContent = topK[i]; ol.appendChild(li);
+      }
+      show($("result"), true); show($("ui"), false);
+    });
+  });
+
+  $("restart").addEventListener("click", function(){
+    show($("result"), false);
+    cmpCount = 0; history = []; compareQueue = []; compareResolve = null;
+  });
+})();
+</script>
+</body>
+</html>
